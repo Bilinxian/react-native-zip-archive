@@ -10,11 +10,7 @@ const normalizeFilePath = (path) =>
   path.startsWith("file://") ? path.slice(7) : path;
 
 export const unzip = (source, target, charset = "UTF-8") => {
-  return RNZipArchive.unzip(
-    normalizeFilePath(source),
-    normalizeFilePath(target),
-    charset
-  );
+  return RNZipArchive.unzip(normalizeFilePath(source), normalizeFilePath(target), charset);
 };
 export const isPasswordProtected = (source) => {
   return RNZipArchive.isPasswordProtected(normalizeFilePath(source)).then(
@@ -38,29 +34,23 @@ export const zipWithPassword = (
 ) => {
   return Array.isArray(source)
     ? RNZipArchive.zipFilesWithPassword(
-        source.map(normalizeFilePath),
-        normalizeFilePath(target),
-        password,
-        encryptionMethod
-      )
+      source.map(normalizeFilePath),
+      normalizeFilePath(target),
+      password,
+      encryptionMethod
+    )
     : RNZipArchive.zipFolderWithPassword(
-        normalizeFilePath(source),
-        normalizeFilePath(target),
-        password,
-        encryptionMethod
-      );
+      normalizeFilePath(source),
+      normalizeFilePath(target),
+      password,
+      encryptionMethod
+    );
 };
 
 export const zip = (source, target) => {
   return Array.isArray(source)
-    ? RNZipArchive.zipFiles(
-        source.map(normalizeFilePath),
-        normalizeFilePath(target)
-      )
-    : RNZipArchive.zipFolder(
-        normalizeFilePath(source),
-        normalizeFilePath(target)
-      );
+    ? RNZipArchive.zipFiles(source.map(normalizeFilePath), normalizeFilePath(target))
+    : RNZipArchive.zipFolder(normalizeFilePath(source), normalizeFilePath(target));
 };
 
 export const unzipAssets = (source, target) => {
@@ -68,10 +58,7 @@ export const unzipAssets = (source, target) => {
     throw new Error("unzipAssets not supported on this platform");
   }
 
-  return RNZipArchive.unzipAssets(
-    normalizeFilePath(source),
-    normalizeFilePath(target)
-  );
+  return RNZipArchive.unzipAssets(normalizeFilePath(source), normalizeFilePath(target));
 };
 
 export const subscribe = (callback) => {

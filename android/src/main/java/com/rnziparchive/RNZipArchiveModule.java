@@ -1,7 +1,6 @@
 package com.rnziparchive;
 
 import android.content.res.AssetFileDescriptor;
-import android.net.Uri;
 import android.os.Build;
 import android.util.Log;
 
@@ -24,7 +23,6 @@ import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.Enumeration;
 import java.util.List;
 import java.util.zip.ZipEntry;
@@ -38,7 +36,6 @@ import net.lingala.zip4j.model.enums.CompressionMethod;
 import net.lingala.zip4j.model.enums.CompressionLevel;
 import net.lingala.zip4j.model.enums.EncryptionMethod;
 import net.lingala.zip4j.model.enums.AesKeyStrength;
-import net.lingala.zip4j.progress.ProgressMonitor;
 
 import java.nio.charset.Charset;
 
@@ -70,7 +67,7 @@ public class RNZipArchiveModule extends ReactContextBaseJavaModule {
 
   @ReactMethod
   public void unzipWithPassword(final String zipFilePath, final String destDirectory,
-                                final String password, final Promise promise) {
+        final String password, final Promise promise) {
     new Thread(new Runnable() {
       @Override
       public void run() {
@@ -95,11 +92,11 @@ public class RNZipArchiveModule extends ReactContextBaseJavaModule {
             String destDirCanonicalPath = (new File(destDirectory).getCanonicalPath()) + File.separator;
 
             if (!canonicalPath.startsWith(destDirCanonicalPath)) {
-              throw new SecurityException(String.format("Found Zip Path Traversal Vulnerability with %s", canonicalPath));
+                 throw new SecurityException(String.format("Found Zip Path Traversal Vulnerability with %s", canonicalPath));
             }
 
             if (!fileHeader.isDirectory()) {
-              zipFile.extractFile(fileHeader, destDirectory);
+               zipFile.extractFile(fileHeader, destDirectory);
               extractedFileNames.add(fileHeader.getFileName());
             }
             updateProgress(i + 1, totalFiles, zipFilePath);
@@ -152,26 +149,11 @@ public class RNZipArchiveModule extends ReactContextBaseJavaModule {
             zipFile = new net.lingala.zip4j.ZipFile(zipFilePath);
           }
 
-          ProgressMonitor progressMonitor = zipFile.getProgressMonitor();
-
-          zipFile.setRunInThread(true);
           zipFile.extractAll(destDirectory);
 
-          while (!progressMonitor.getState().equals(ProgressMonitor.State.READY)) {
-            updateProgress(progressMonitor.getWorkCompleted(), progressMonitor.getTotalWork(), zipFilePath);
-
-            Thread.sleep(100);
-          }
-
-          if (progressMonitor.getResult().equals(ProgressMonitor.Result.SUCCESS)) {
-            zipFile.close();
-            updateProgress(1, 1, zipFilePath); // force 100%
-            promise.resolve(destDirectory);
-          } else if (progressMonitor.getResult().equals(ProgressMonitor.Result.ERROR)) {
-            throw new Exception("Error occurred. Error message: " + progressMonitor.getException().getMessage());
-          } else if (progressMonitor.getResult().equals(ProgressMonitor.Result.CANCELLED)) {
-            throw new Exception("Task cancelled");
-          }
+          zipFile.close();
+          updateProgress(1, 1, zipFilePath); // force 100%
+          promise.resolve(destDirectory);
         } catch (Exception ex) {
           updateProgress(0, 1, zipFilePath); // force 0%
           promise.reject(null, "Failed to extract file " + ex.getLocalizedMessage());
@@ -196,21 +178,12 @@ public class RNZipArchiveModule extends ReactContextBaseJavaModule {
       @Override
       public void run() {
         InputStream assetsInputStream;
-        final long compressedSize;
+        final long size;
 
         try {
-          if(assetsPath.startsWith("content://")) {
-            var assetUri = Uri.parse(assetsPath);
-            var contentResolver = getReactApplicationContext().getContentResolver();
-
-            assetsInputStream = contentResolver.openInputStream(assetUri);
-            var fileDescriptor = contentResolver.openFileDescriptor(assetUri, "r");
-            compressedSize = fileDescriptor.getStatSize();
-          } else {
-            assetsInputStream = getReactApplicationContext().getAssets().open(assetsPath);
-            AssetFileDescriptor fileDescriptor = getReactApplicationContext().getAssets().openFd(assetsPath);
-            compressedSize = fileDescriptor.getLength();
-          }
+          assetsInputStream = getReactApplicationContext().getAssets().open(assetsPath);
+          AssetFileDescriptor fileDescriptor = getReactApplicationContext().getAssets().openFd(assetsPath);
+          size = fileDescriptor.getLength();
         } catch (IOException e) {
           promise.reject(null, String.format("Asset file `%s` could not be opened", assetsPath));
           return;
@@ -228,21 +201,19 @@ public class RNZipArchiveModule extends ReactContextBaseJavaModule {
 
             ZipEntry entry;
 
-            long extractedBytes = 0;
-            updateProgress(extractedBytes, compressedSize, assetsPath); // force 0%
+            final long[] extractedBytes = {0};
+            final int[] lastPercentage = {0};
 
+            updateProgress(0, 1, assetsPath); // force 0%
             File fout;
             while ((entry = zipIn.getNextEntry()) != null) {
               if (entry.isDirectory()) continue;
-
-              Log.i("rnziparchive", "Extracting: " + entry.getName());
-
               fout = new File(destDirectory, entry.getName());
               String canonicalPath = fout.getCanonicalPath();
               String destDirCanonicalPath = (new File(destDirectory).getCanonicalPath()) + File.separator;
 
               if (!canonicalPath.startsWith(destDirCanonicalPath)) {
-                throw new SecurityException(String.format("Found Zip Path Traversal Vulnerability with %s", canonicalPath));
+                   throw new SecurityException(String.format("Found Zip Path Traversal Vulnerability with %s", canonicalPath));
               }
 
               if (!fout.exists()) {
@@ -250,22 +221,31 @@ public class RNZipArchiveModule extends ReactContextBaseJavaModule {
                 (new File(fout.getParent())).mkdirs();
               }
 
+              final ZipEntry finalEntry = entry;
+              StreamUtil.ProgressCallback cb = new StreamUtil.ProgressCallback() {
+                @Override
+                public void onCopyProgress(long bytesRead) {
+                  extractedBytes[0] += bytesRead;
+
+                  int lastTime = lastPercentage[0];
+                  int percentDone = (int) ((double) extractedBytes[0] * 100 / (double) size);
+
+                  // update at most once per percent.
+                  if (percentDone > lastTime) {
+                    lastPercentage[0] = percentDone;
+                    updateProgress(extractedBytes[0], size, finalEntry.getName());
+                  }
+                }
+              };
+
               FileOutputStream out = new FileOutputStream(fout);
               BufferedOutputStream Bout = new BufferedOutputStream(out);
-              StreamUtil.copy(bin, Bout, null);
+              StreamUtil.copy(bin, Bout, cb);
               Bout.close();
               out.close();
-
-              extractedBytes += entry.getCompressedSize();
-
-              // do not let the percentage go over 99% because we want it to hit 100% only when we are sure it's finished
-              if(extractedBytes > compressedSize*0.99) extractedBytes = (long) (compressedSize*0.99);
-
-              updateProgress(extractedBytes, compressedSize, entry.getName());
             }
 
-            updateProgress(compressedSize, compressedSize, assetsPath); // force 100%
-
+            updateProgress(1, 1, assetsPath); // force 100%
             bin.close();
             zipIn.close();
           } catch (Exception ex) {
@@ -296,21 +276,21 @@ public class RNZipArchiveModule extends ReactContextBaseJavaModule {
 
   @ReactMethod
   public void zipFilesWithPassword(final ReadableArray files, final String destFile, final String password,
-                                   String encryptionMethod, Promise promise) {
+                              String encryptionMethod, Promise promise) {
     zipWithPassword(files.toArrayList(), destFile, password, encryptionMethod, promise);
   }
 
 
   @ReactMethod
   public void zipFolderWithPassword(final String folder, final String destFile, final String password,
-                                    String encryptionMethod, Promise promise) {
+                                   String encryptionMethod, Promise promise) {
     ArrayList<Object> folderAsArrayList = new ArrayList<>();
     folderAsArrayList.add(folder);
     zipWithPassword(folderAsArrayList, destFile, password, encryptionMethod, promise);
   }
 
   private void zipWithPassword(final ArrayList<Object> filesOrDirectory, final String destFile, final String password,
-                               String encryptionMethod, Promise promise) {
+      String encryptionMethod, Promise promise) {
     try{
 
       ZipParameters parameters = new ZipParameters();
@@ -441,7 +421,7 @@ public class RNZipArchiveModule extends ReactContextBaseJavaModule {
     long totalSize = getUncompressedSize(zipFilePath, charset);
     promise.resolve((double) totalSize);
   }
-
+  
   /**
    * Return the uncompressed size of the ZipFile (only works for files on disk, not in assets)
    *
